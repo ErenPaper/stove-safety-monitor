@@ -34,6 +34,8 @@ firmware/
 data_collection/
   logger.py                      records one 60 s labelled session from the Pico over USB serial
   data_logs/{burner,oven}/<state>_<attendance>/*.csv   152 labelled recordings
+tools/
+  replay_rules.py                runs the decision rules over the dataset, no hardware needed
 ```
 
 ### Dataset
@@ -45,6 +47,38 @@ pip install pyserial
 python data_collection/logger.py burner hot attended    # device, state, attendance
 ```
 Set `PORT` at the top of `logger.py` for your machine.
+
+## Why the model needs all three sensors
+
+The two appliances produce different signals, and the recordings show it (mean readings over each class):
+
+| | IR surface temperature | DS18B20 contact temperature |
+|---|---|---|
+| Burner, hot | 99 to 112 C | about 22 C (room temperature) |
+| Oven, hot | about 30 C (max 34 C) | 62 to 72 C |
+| Idle, either | about 22 C | about 22 C |
+
+On a burner the infrared sensor sees the heat and the contact probe does not. On the oven it is the other way round. The rule layer only uses the infrared reading, so it can only recognise burner states. Combining all three channels is what the Edge Impulse model is for.
+
+## Replaying the rules without hardware
+
+`tools/replay_rules.py` is a Python port of the rule layer. It splits each recording into the 12-sample windows the deployed model used (about 20 s) and runs the rules with **no model label**, then compares the result with the recorded label.
+
+```sh
+python tools/replay_rules.py
+```
+
+Rules only, 219 windows:
+
+| Recorded as | Burner | Oven |
+|---|---|---|
+| idle | 100 % (16 of 16) | 100 % (17 of 17) |
+| warming up, attended | 100 % (8 of 8) | 0 % (0 of 24) |
+| hot, attended | 87.5 % (14 of 16) | 0 % (0 of 36) |
+| hot, unattended | 100 % (15 of 15) | 0 % (0 of 38) |
+| cooling down | 18.8 % (3 of 16) | 0 % (0 of 33) |
+
+The rules handle the burner well except for cooling down, and cannot see the oven at all, for the reason above. This is not a measurement of the deployed system, which adds the model. It shows what the hand-written rules contribute and where the model has to do the work.
 
 ## Running it
 
